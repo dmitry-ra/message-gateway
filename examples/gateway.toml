@@ -1,0 +1,6 @@
+# Replace the thread ID with an existing session on this machine.
+[[targets]]
+name = "work"
+thread = "REPLACE_WITH_THREAD_ID"
+batching = true
+# socket defaults to ~/.codex/app-server-control/app-server-control.sock

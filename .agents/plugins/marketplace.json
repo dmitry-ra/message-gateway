@@ -1,0 +1,9 @@
+{
+  "name": "message-gateway-local",
+  "plugins": [{
+    "name": "message-gateway",
+    "source": {"source": "local", "path": "./plugins/message-gateway"},
+    "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+    "category": "Developer Tools"
+  }]
+}

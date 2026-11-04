@@ -1,0 +1,167 @@
+import asyncio
+from collections.abc import Coroutine
+from typing import Any
+
+import pytest
+
+from message_gateway.core.models import DeliveryBusy, DeliveryUnknown, Readiness
+from message_gateway.core.service import QueueFull, Service, Target
+from tests.helpers import FakeAdapter
+
+
+def run(coroutine: Coroutine[Any, Any, None]) -> None:
+    asyncio.run(coroutine)
+
+
+@pytest.mark.parametrize("batching,expected", [(True, [4]), (False, [1, 1, 1, 1])])
+def test_busy_then_ready_batches_in_order(batching: bool, expected: list[int]) -> None:
+    async def scenario() -> None:
+        adapter = FakeAdapter(Readiness.BUSY)
+        service = Service({"work": Target(adapter, batching=batching)})
+        for number in range(4):
+            service.submit("work", "feed", str(number))
+        await service.tick()
+        assert adapter.batches == []
+        adapter.state = Readiness.UNKNOWN
+        await service.tick()
+        assert adapter.batches == []
+        adapter.state = Readiness.READY
+        for _ in range(5):
+            await service.tick()
+        assert [len(batch) for batch in adapter.batches] == expected
+        assert [m.content for b in adapter.batches for m in b] == ["0", "1", "2", "3"]
+        assert service.targets["work"].last_result is not None
+        assert service.status()["work"] is not None
+
+    run(scenario())
+
+
+def test_arrivals_during_send_and_duplicate_wakeup() -> None:
+    async def scenario() -> None:
+        adapter = FakeAdapter()
+        adapter.release.clear()
+        service = Service({"work": Target(adapter)})
+        first = service.submit("work", "feed", "first")
+        task = asyncio.create_task(service.tick())
+        await adapter.entered.wait()
+        second = service.submit("work", "feed", "second")
+        await service.tick()
+        assert service.targets["work"].sending == 1
+        adapter.release.set()
+        await task
+        assert adapter.batches == [[first]]
+        await service.tick()
+        assert adapter.batches == [[first], [second]]
+        await service.tick()
+        assert len(adapter.batches) == 2
+
+    run(scenario())
+
+
+def test_batch_limit_and_busy_refusal_preserve_order() -> None:
+    async def scenario() -> None:
+        adapter = FakeAdapter()
+        adapter.error = DeliveryBusy()
+        service = Service({"work": Target(adapter)}, batch_limit=2)
+        for value in ["a", "b", "c"]:
+            service.submit("work", "feed", value)
+        await service.tick()
+        assert [m.content for m in service.targets["work"].queue] == ["a", "b", "c"]
+        adapter.error = None
+        await service.tick()
+        await service.tick()
+        assert [[m.content for m in b] for b in adapter.batches] == [["a", "b"], ["c"]]
+
+    run(scenario())
+
+
+def test_independent_targets_and_unknown_result_no_retry() -> None:
+    async def scenario() -> None:
+        broken, healthy = FakeAdapter(), FakeAdapter()
+        broken.error = DeliveryUnknown("Connection lost")
+        service = Service({"bad": Target(broken), "good": Target(healthy)})
+        failed = service.submit("bad", "feed", "bad")
+        service.submit("good", "feed", "good")
+        await service.tick()
+        assert len(healthy.batches) == 1
+        assert service.targets["bad"].last_result == {
+            "status": "uncertain",
+            "messages": [failed.id],
+            "error": "Connection lost",
+        }
+        broken.error = None
+        await service.tick()
+        assert broken.batches == []
+        broken.read_error = RuntimeError("offline")
+        await service.tick()
+        assert service.targets["bad"].state == Readiness.UNKNOWN
+
+    run(scenario())
+
+
+def test_input_limits_and_fresh_process_state() -> None:
+    adapter = FakeAdapter()
+    service = Service({"work": Target(adapter)}, queue_limit=1)
+    for channel, text in [
+        ("", "x"),
+        ("c" * 129, "x"),
+        ("\ud800", "x"),
+        ("c", " "),
+        ("c", "x" * 65537),
+    ]:
+        with pytest.raises(ValueError):
+            service.submit("work", channel, text)
+    with pytest.raises(KeyError):
+        service.submit("missing", "c", "x")
+    original = "\u041f\u0440\u0438\u0432\u0435\u0442 \u4e16\u754c \U0001f600\r\n"
+    assert service.submit("work", "feed", original).content == original
+    with pytest.raises(QueueFull):
+        service.submit("work", "feed", "extra")
+    assert not Service({"work": Target(adapter)}).targets["work"].queue
+    for targets, queue_limit, batch_limit in [
+        ({}, 1, 1),
+        ({"w": Target(adapter)}, 0, 1),
+        ({"w": Target(adapter)}, 1, 0),
+    ]:
+        with pytest.raises(ValueError):
+            Service(targets, queue_limit=queue_limit, batch_limit=batch_limit)
+
+
+def test_run_wakes_polls_and_closes_on_cancel() -> None:
+    async def scenario() -> None:
+        adapter = FakeAdapter(Readiness.BUSY)
+        service = Service({"work": Target(adapter)})
+        with pytest.raises(ValueError):
+            await service.run(0)
+        task = asyncio.create_task(service.run(0.001))
+        service.submit("work", "feed", "x")
+        await asyncio.sleep(0.005)
+        adapter.state = Readiness.READY
+        async with asyncio.timeout(1):
+            while not adapter.batches:
+                await asyncio.sleep(0.001)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert adapter.closed
+
+    run(scenario())
+
+
+def test_cancellation_during_send() -> None:
+    async def scenario() -> None:
+        adapter = FakeAdapter()
+        adapter.release.clear()
+        service = Service({"work": Target(adapter)}, queue_limit=1)
+        service.submit("work", "feed", "x")
+        task = asyncio.create_task(service.tick())
+        await adapter.entered.wait()
+        with pytest.raises(QueueFull):
+            service.submit("work", "feed", "y")
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert service.targets["work"].sending == 0
+        assert service.targets["work"].last_result is not None
+
+    run(scenario())

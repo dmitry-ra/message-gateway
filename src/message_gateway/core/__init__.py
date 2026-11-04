@@ -1,0 +1,1 @@
+"""Transport-independent queue operations."""
