@@ -61,3 +61,40 @@ def test_display_metadata_validation() -> None:
         format_messages("thread", [message])["input"][0]["text"]
         == "[2026-10-31 19:23:07 UTC] name@source> "
     )
+
+
+@pytest.mark.parametrize(
+    "sent_at",
+    [
+        "2026-11-04T12:00:00Z",
+        "2026-11-04t12:00:00z",
+        "2026-11-04T12:00:00.123456789+03:30",
+        "2026-11-04T12:00:00-05:00",
+        "2026-11-04T12:00:00-00:00",
+    ],
+)
+def test_timestamp_preserves_rfc3339_input(sent_at: str) -> None:
+    service = Service({"work": Target(FakeAdapter())})
+    message = service.submit("work", "source", "x", sent_at=sent_at)
+    assert message.sent_at == sent_at
+    assert "UTC]" in format_messages("thread", [message])["input"][0]["text"]
+
+
+@pytest.mark.parametrize(
+    "sent_at",
+    [
+        "2026-11-04X12:00:00+00:00",
+        "2026-11-04 12:00:00+00:00",
+        "2026-11-04T12:00Z",
+        "2026-11-04T12:00:00+0300",
+        "2026-11-04T12:00:00,5Z",
+        "2026-02-30T12:00:00Z",
+        "2026-11-04T24:00:00Z",
+        "2026-11-04T12:00:00+24:00",
+    ],
+)
+def test_timestamp_rejects_non_rfc3339_input(sent_at: str) -> None:
+    service = Service({"work": Target(FakeAdapter())})
+    with pytest.raises(ValueError):
+        service.submit("work", "source", "x", sent_at=sent_at)
+    assert not service.targets["work"].queue

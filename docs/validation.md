@@ -1,6 +1,12 @@
 # Validation record
 
-## Current deterministic checks (0.6.0)
+## Current deterministic checks (0.6.1)
+
+Timestamp contract tests enforce RFC 3339 date-time syntax independently with
+jsonschema's installed format checker. Core and real HTTP/MCP submissions reject
+nonstandard separators, omitted seconds and compact offsets, and preserve UTC,
+signed offsets, fractional seconds and lowercase t/z. Calendar/timezone errors
+are rejected by the shared core validator. Leap seconds remain unsupported.
 
 The current deterministic suite exercises one daemon hosting HTTP and Streamable
 HTTP MCP, queue ordering and batching, complete original context, CLI startup,
