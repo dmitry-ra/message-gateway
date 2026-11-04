@@ -1,12 +1,16 @@
 # Validation record
 
-## Current foundation checks (0.5.0)
+## Current foundation and delivery-state checks (0.5.1)
 
 The current deterministic suite exercises one daemon hosting HTTP and Streamable
 HTTP MCP, queue ordering and batching, complete original context, CLI startup,
 packaged resources and authentication. `tools/check.py`, `uv build`, and
 `tools/package_smoke.py` are required before merging. CI repeats those checks on
 Python 3.12, 3.13, and 3.14 for the actual pull request head.
+
+Delivery-state tests cover non-active recovery attempts, malformed and unavailable
+state reads, queue diagnostics and native turn error/completion observations.
+Diagnostics use an explicit field allowlist without source message content.
 
 Package, CLI, OpenAPI, lockfile and plugin versions share the same release series.
 Earlier branch prototypes reached 0.4.0 before a development version reset;
