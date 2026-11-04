@@ -172,7 +172,7 @@ error prose and full RPC envelopes are not logged.
   class where available. Adapter receipts are omitted from diagnostics. Uncertain results are still not retried.
 - `codex_delivery`: native delivery method (`turn/start` or `turn/steer`) and
   expected active turn ID when steering. No message content is logged.
-- `codex_delivery_deferred`: interactive preparation failed before any input
+- `codex_delivery_deferred`: input preparation failed before any input
   submission; stage and error class explain why the batch remains queued.
 
 - `codex_turn`: received `error` or `turn/completed` notifications for the

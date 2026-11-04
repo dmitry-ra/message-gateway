@@ -285,7 +285,11 @@ class CodexAdapter:
         method = response["method"]
         if method == "thread/status/changed":
             status = params.get("status")
-            if isinstance(status, dict) and isinstance(status.get("type"), str) and status["type"]:
+            if (
+                isinstance(status, dict)
+                and isinstance(status.get("type"), str)
+                and status["type"].strip()
+            ):
                 self._observe_state(status, "notification")
             return
         if method not in ("error", "turn/completed"):
