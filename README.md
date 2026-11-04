@@ -18,7 +18,7 @@ message previews are displayed separately from the complete original content.
 ## Status
 
 Early development. REST, Streamable HTTP MCP, and the native Codex adapter are implemented.
-Version0.1.0 runs both interfaces in one daemon; the earlier stdio proxy is removed.
+Both interfaces run in one daemon; the earlier stdio proxy is removed.
 The API is versioned under `/v1`; this is an experimental local service.
 
 Queue contents disappear when the process exits. There is no persistence or
@@ -117,12 +117,42 @@ still starts one turn per batch. The model's overall context window remains
 a separate limit.
 
 The adapter is tested with Codex 0.166.0 on Linux using its Unix WebSocket.
+Delivery waits only while the thread reports `active`. Other nonempty string
+states, including `idle`, `notLoaded`, and `systemError`, permit an attempt to
+resume the existing thread and start a turn. The same check runs after resume.
+Failed state reads and malformed states do not permit delivery. App Server
+decides whether the requested turn can start; this policy does not guarantee
+that a model request or the resulting turn will succeed.
 Loaded threads can outlive their terminal: configure only the intended session.
 Readiness is checked again before submission, but App Server does not offer
 an atomic idle-only `turn/start`. Concurrent manual input in that small window
 can make Codex steer an active turn instead of starting a new one. The gateway
 does not claim atomic exclusion with keyboard input. Unknown send results are
 reported and are not automatically retried.
+
+### Operational diagnostics
+
+The existing service log includes JSON diagnostic events, each with a UTC `at`
+timestamp. With systemd, read them using `journalctl --user -u UNIT -o cat`.
+The diagnostic fields are an allowlist; message bodies, previews, senders,
+error prose and full RPC envelopes are not logged.
+
+- `codex_state`: thread identity, raw state type, active flags, derived
+  readiness and observation stage (`read`, `resume` or `notification`).
+- `destination_state`: destination, readiness, wait reason, queue and
+  in-flight counts, oldest queued arrival and readiness error class.
+- `delivery_start`, `delivery_accepted`, `delivery_deferred` and
+  `delivery_uncertain`: destination and message IDs, plus receipt or error
+  class where available. Uncertain results are still not retried.
+- `codex_turn`: received `error` or `turn/completed` notifications for the
+  configured thread, including turn identity, status, error classification,
+  HTTP status when supplied and `will_retry`.
+
+State and wait observations are emitted only when they change; unchanged
+polls do not generate repeated records. Turn notifications are observed while
+the adapter receives App Server frames on its existing connection; they are
+not a durable or retrospective turn history. There is no new observer process,
+message store or change to the delivery policy.
 
 ## MCP
 

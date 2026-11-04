@@ -14,6 +14,7 @@ import aiohttp
 
 from message_gateway import __version__
 from message_gateway.core.models import DeliveryBusy, DeliveryUnknown, Message, Readiness
+from message_gateway.diagnostics import emit
 
 CONTEXT_FRAGMENT_BYTES = 3000
 
@@ -134,6 +135,13 @@ def format_messages(
     }
 
 
+def thread_readiness(thread: dict[str, Any]) -> Readiness:
+    state = thread["status"]["type"]
+    if not isinstance(state, str) or not state:
+        raise DeliveryUnknown("Invalid thread status")
+    return Readiness.BUSY if state == "active" else Readiness.READY
+
+
 class CodexAdapter:
     def __init__(
         self, thread: str, socket: Path, *, timeout: float = 10, effort: str | None = None
@@ -146,6 +154,61 @@ class CodexAdapter:
         self.client: aiohttp.ClientSession | None = None
         self.ws: aiohttp.ClientWebSocketResponse | None = None
         self.sequence = 0
+        self.observed_states: dict[str, tuple[str, tuple[str, ...]]] = {}
+
+    def _observe_state(self, status: dict[str, Any], stage: str) -> None:
+        state = status["type"]
+        flags = status.get("activeFlags")
+        flags = (
+            tuple(flag for flag in flags if isinstance(flag, str))
+            if isinstance(flags, list)
+            else ()
+        )
+        observation = (state, flags)
+        if self.observed_states.get(stage) != observation:
+            self.observed_states[stage] = observation
+            emit(
+                "codex_state",
+                thread_id=self.thread,
+                stage=stage,
+                state=state,
+                active_flags=flags,
+                readiness=(Readiness.BUSY if state == "active" else Readiness.READY).value,
+            )
+
+    def _notification(self, response: dict[str, Any]) -> None:
+        params = response.get("params")
+        if not isinstance(params, dict) or params.get("threadId") != self.thread:
+            return
+        method = response["method"]
+        if method == "thread/status/changed":
+            status = params.get("status")
+            if isinstance(status, dict) and isinstance(status.get("type"), str) and status["type"]:
+                self._observe_state(status, "notification")
+            return
+        if method not in ("error", "turn/completed"):
+            return
+        turn = params.get("turn")
+        turn = turn if isinstance(turn, dict) else {}
+        error = params.get("error", turn.get("error"))
+        error = error if isinstance(error, dict) else {}
+        info = error.get("codexErrorInfo")
+        http_status = None
+        if isinstance(info, dict):
+            for details in info.values():
+                if isinstance(details, dict) and isinstance(details.get("httpStatusCode"), int):
+                    http_status = details["httpStatusCode"]
+            info = list(info)
+        emit(
+            "codex_turn",
+            thread_id=self.thread,
+            notification=method,
+            turn_id=params.get("turnId", turn.get("id")),
+            status=turn.get("status"),
+            error_info=info,
+            http_status=http_status,
+            will_retry=params.get("willRetry"),
+        )
 
     async def _connect(self) -> None:
         if self.ws is not None and not self.ws.closed:
@@ -180,7 +243,10 @@ class CodexAdapter:
                 if frame.type != aiohttp.WSMsgType.TEXT:
                     raise DeliveryUnknown("App Server connection closed")
                 response = json.loads(frame.data)
-                if response.get("id") != request_id or "method" in response:
+                if "method" in response:
+                    self._notification(response)
+                    continue
+                if response.get("id") != request_id:
                     continue
                 if "error" in response:
                     raise DeliveryUnknown("App Server error: " + json.dumps(response["error"]))
@@ -198,10 +264,9 @@ class CodexAdapter:
             thread = result["thread"]
             if thread["id"] != self.thread:
                 raise DeliveryUnknown("Thread identity mismatch")
-            state = thread["status"]["type"]
-            if state == "idle":
-                return Readiness.READY
-            return Readiness.BUSY if state == "active" else Readiness.UNKNOWN
+            readiness = thread_readiness(thread)
+            self._observe_state(thread["status"], "read")
+            return readiness
         except Exception:
             await self.close()
             raise
@@ -215,7 +280,9 @@ class CodexAdapter:
             )
             if result["thread"]["id"] != self.thread:
                 raise DeliveryUnknown("Resumed thread identity mismatch")
-            if result["thread"]["status"]["type"] != "idle":
+            readiness = thread_readiness(result["thread"])
+            self._observe_state(result["thread"]["status"], "resume")
+            if readiness == Readiness.BUSY:
                 raise DeliveryBusy("Thread became busy while subscribing")
             params = format_messages(self.thread, messages, Path(self.documents.name))
             if self.effort is not None:
