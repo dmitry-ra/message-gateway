@@ -18,7 +18,7 @@ message previews are displayed separately from the complete original content.
 ## Status
 
 Early development. REST, Streamable HTTP MCP, and the native Codex adapter are implemented.
-Version0.1.0 runs both interfaces in one daemon; the earlier stdio proxy is removed.
+Both interfaces run in one daemon; the earlier stdio proxy is removed.
 The API is versioned under `/v1`; this is an experimental local service.
 
 Queue contents disappear when the process exits. There is no persistence or
@@ -111,7 +111,11 @@ Production delivery therefore uses a manifest and independent complete message
 items of at most 3000 bytes. Oversized individual messages are written as ready
 UTF-8 JSON documents in an adapter-owned temporary directory; the skill reads
 the document without reconstructing JSON fragments or calculating hashes. These
-files last for the adapter lifetime and are not persistent queue storage. The
+files survive transport reconnects and remain until the same receiver is observed
+idle after a turn. They are not persistent queue storage or an archival history.
+Temporary context storage is limited to 64 MiB and 1000 documents per adapter;
+a batch that would exceed either limit is deferred before input submission.
+This preserves already referenced files until the receiver becomes idle. The
 pure formatter retains legacy fragment framing for compatibility. This framing is independent of channel names and source schemas and
 still starts one turn per batch. The model's overall context window remains
 a separate limit.
@@ -144,7 +148,7 @@ and MCP. aiohttp remains the adapter's client for the existing Codex App Server.
 
 Authorization uses the same optional bearer token on both interfaces. Host and
 Origin validation restricts local access; request bodies, including JSON-RPC
-envelopes, are limited to512KiB. Content retains its separate65536-byte limit.
+envelopes, are limited to 512 KiB. Content retains its separate 65536-byte limit.
 Disconnecting an MCP client does not discard accepted messages or stop delivery.
 Earlier stdio client configurations must change to the URL above; there is
 no compatibility proxy. No changes are required to REST submission URLs.

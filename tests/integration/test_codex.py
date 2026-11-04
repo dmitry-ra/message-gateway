@@ -120,7 +120,9 @@ def test_codex_send_failures(tmp_path: Path, failure: str) -> None:
         else:
             server.failure = failure
         async with server.connect(tmp_path / "server.sock", timeout=0.02) as adapter:
-            expected = DeliveryBusy if failure == "resume_busy" else DeliveryUnknown
+            expected = (
+                DeliveryBusy if failure in ("resume_busy", "resume_identity") else DeliveryUnknown
+            )
             with pytest.raises(expected):
                 await adapter.send([Message.create("c", "x")])
             assert len([r for r in server.requests if r["method"] == "turn/start"]) <= 1

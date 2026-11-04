@@ -31,6 +31,9 @@ def test_security_applies_to_rest_and_mcp() -> None:
                         await client.get(url + path, headers={**headers, "Host": "evil.example"})
                     ).status == 403
                     assert (
+                        await client.get(url + path, headers={**headers, "Host": "[invalid"})
+                    ).status == 403
+                    assert (
                         await client.post(url + path, data=b"x" * (512 * 1024 + 1), headers=headers)
                     ).status == 413
         assert not service.targets["work"].queue

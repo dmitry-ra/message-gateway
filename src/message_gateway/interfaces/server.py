@@ -29,7 +29,11 @@ class Security:
             return
         host = headers.get(b"host", b"").decode("latin1")
         origin = headers.get(b"origin")
-        if urlsplit("http://" + host).hostname not in ("127.0.0.1", "localhost") or (
+        try:
+            hostname = urlsplit("http://" + host).hostname
+        except ValueError:
+            hostname = None
+        if hostname not in ("127.0.0.1", "localhost") or (
             origin is not None
             and origin.decode("latin1") not in ("http://" + host, "https://" + host)
         ):

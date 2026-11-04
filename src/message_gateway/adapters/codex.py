@@ -16,6 +16,8 @@ from message_gateway import __version__
 from message_gateway.core.models import DeliveryBusy, DeliveryUnknown, Message, Readiness
 
 CONTEXT_FRAGMENT_BYTES = 3000
+CONTEXT_DOCUMENT_BYTES = 64 * 1024 * 1024
+CONTEXT_DOCUMENT_FILES = 1000
 
 
 def packet_context(
@@ -29,11 +31,26 @@ def packet_context(
     if len(value) <= CONTEXT_FRAGMENT_BYTES:
         return {"gateway_packet": {"kind": "untrusted", "name": "gateway_packet", "value": value}}
     if directory is not None:
+        items = [
+            json.dumps(asdict(message), ensure_ascii=False, allow_nan=False) for message in messages
+        ]
+        existing = list(directory.glob("*.json"))
+        created = [
+            item.encode("utf-8")
+            for message, item in zip(messages, items, strict=True)
+            if len(item.encode("utf-8")) > CONTEXT_FRAGMENT_BYTES
+            and not (directory / (message.id + ".json")).exists()
+        ]
+        if (
+            len(existing) + len(created) > CONTEXT_DOCUMENT_FILES
+            or sum(path.stat().st_size for path in existing) + sum(map(len, created))
+            > CONTEXT_DOCUMENT_BYTES
+        ):
+            raise DeliveryBusy("Temporary context storage is full")
         result = {}
         names = []
-        for index, message in enumerate(messages):
+        for index, (message, item) in enumerate(zip(messages, items, strict=True)):
             name = f"gateway_message_{index:04d}"
-            item = json.dumps(asdict(message), ensure_ascii=False, allow_nan=False)
             if len(item.encode("utf-8")) > CONTEXT_FRAGMENT_BYTES:
                 path = directory / (message.id + ".json")
                 path.write_text(item, encoding="utf-8")
@@ -147,6 +164,19 @@ class CodexAdapter:
         self.ws: aiohttp.ClientWebSocketResponse | None = None
         self.sequence = 0
 
+    def _thread(self, result: dict[str, Any]) -> dict[str, Any]:
+        thread = result.get("thread")
+        if not isinstance(thread, dict) or thread.get("id") != self.thread:
+            raise DeliveryUnknown("Thread identity mismatch")
+        status = thread.get("status")
+        if (
+            not isinstance(status, dict)
+            or not isinstance(status.get("type"), str)
+            or not status["type"]
+        ):
+            raise DeliveryUnknown("Invalid thread status")
+        return thread
+
     async def _connect(self) -> None:
         if self.ws is not None and not self.ws.closed:
             return
@@ -195,11 +225,12 @@ class CodexAdapter:
             result = await self._request(
                 "thread/read", {"threadId": self.thread, "includeTurns": False}
             )
-            thread = result["thread"]
-            if thread["id"] != self.thread:
-                raise DeliveryUnknown("Thread identity mismatch")
+            thread = self._thread(result)
             state = thread["status"]["type"]
             if state == "idle":
+                # An observed idle receiver has finished its previous turn.
+                for path in Path(self.documents.name).glob("*.json"):
+                    path.unlink()
                 return Readiness.READY
             return Readiness.BUSY if state == "active" else Readiness.UNKNOWN
         except Exception:
@@ -207,19 +238,19 @@ class CodexAdapter:
             raise
 
     async def send(self, messages: list[Message]) -> str:
-        if await self.readiness() != Readiness.READY:
-            raise DeliveryBusy("Thread is no longer ready")
+        input_attempted = False
         try:
+            if await self.readiness() != Readiness.READY:
+                raise DeliveryBusy("Thread is no longer ready")
             result = await self._request(
                 "thread/resume", {"threadId": self.thread, "excludeTurns": True}
             )
-            if result["thread"]["id"] != self.thread:
-                raise DeliveryUnknown("Resumed thread identity mismatch")
-            if result["thread"]["status"]["type"] != "idle":
-                raise DeliveryBusy("Thread became busy while subscribing")
+            if self._thread(result)["status"]["type"] != "idle":
+                raise DeliveryBusy("Thread is no longer ready after subscribing")
             params = format_messages(self.thread, messages, Path(self.documents.name))
             if self.effort is not None:
                 params["effort"] = self.effort
+            input_attempted = True
             result = await self._request("turn/start", params)
             receipt = result["turn"]["id"]
             if not isinstance(receipt, str):
@@ -229,6 +260,8 @@ class CodexAdapter:
             raise
         except Exception as error:
             await self.close()
+            if not input_attempted:
+                raise DeliveryBusy("Input preparation failed before submission") from error
             raise DeliveryUnknown(str(error)) from error
 
     async def close(self) -> None:
