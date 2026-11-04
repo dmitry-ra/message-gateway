@@ -2,15 +2,13 @@
 
 import asyncio
 import json
-import logging
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from message_gateway.core.adapter import Adapter
 from message_gateway.core.models import DeliveryBusy, JsonValue, Message, Readiness
-
-logger = logging.getLogger(__name__)
+from message_gateway.diagnostics import emit
 
 
 class QueueFull(Exception):
@@ -26,6 +24,7 @@ class Target:
     state: Readiness = Readiness.UNKNOWN
     sending: int = 0
     last_result: dict[str, object] | None = None
+    observation: tuple[str, str, str | None, int, int, str | None] | None = None
 
 
 class Service:
@@ -91,39 +90,75 @@ class Service:
         }
 
     async def tick(self) -> None:
-        await asyncio.gather(*(self._dispatch(target) for target in self.targets.values()))
+        await asyncio.gather(
+            *(self._dispatch(name, target) for name, target in self.targets.items())
+        )
 
-    async def _dispatch(self, target: Target) -> None:
+    def _observe(
+        self, name: str, target: Target, reason: str, error_type: str | None = None
+    ) -> None:
+        oldest = target.queue[0].received_at if target.queue else None
+        observation = (
+            target.state.value,
+            reason,
+            error_type,
+            len(target.queue),
+            target.sending,
+            oldest,
+        )
+        if target.observation != observation:
+            target.observation = observation
+            emit(
+                "destination_state",
+                target=name,
+                state=target.state.value,
+                reason=reason,
+                queued=len(target.queue),
+                sending=target.sending,
+                oldest_received_at=oldest,
+                error_type=error_type,
+            )
+
+    async def _dispatch(self, name: str, target: Target) -> None:
         if target.lock.locked():
             return
         async with target.lock:
             try:
                 target.state = await target.adapter.readiness()
-            except Exception:
+            except Exception as error:
                 target.state = Readiness.UNKNOWN
-                logger.warning("Destination readiness check failed", exc_info=True)
+                self._observe(name, target, "readiness_error", type(error).__name__)
                 return
+            reason = "empty" if not target.queue else target.state.value
+            self._observe(name, target, reason)
             if target.state != Readiness.READY or not target.queue:
                 return
             count = min(len(target.queue), self.batch_limit if target.batching else 1)
             messages = [target.queue.popleft() for _ in range(count)]
             target.sending = count
+            self._observe(name, target, "sending")
             ids = [message.id for message in messages]
+            emit("delivery_start", target=name, messages=ids, queued=len(target.queue))
             try:
                 receipt = await target.adapter.send(messages)
                 target.last_result = {"status": "accepted", "messages": ids, "receipt": receipt}
-                logger.info("Delivery accepted: messages=%s receipt=%s", ids, receipt)
+                emit("delivery_accepted", target=name, messages=ids)
             except DeliveryBusy:
                 target.queue.extendleft(reversed(messages))
                 target.state = Readiness.BUSY
+                emit("delivery_deferred", target=name, messages=ids, queued=len(target.queue))
             except asyncio.CancelledError:
                 target.last_result = {"status": "uncertain", "messages": ids, "error": "Stopped"}
+                emit("delivery_uncertain", target=name, messages=ids, error_type="CancelledError")
                 raise
             except Exception as error:
                 target.last_result = {"status": "uncertain", "messages": ids, "error": str(error)}
-                logger.warning("Delivery result unknown; batch will not be retried", exc_info=True)
+                emit(
+                    "delivery_uncertain", target=name, messages=ids, error_type=type(error).__name__
+                )
             finally:
                 target.sending = 0
+                self._observe(name, target, "empty" if not target.queue else target.state.value)
 
     async def run(self, interval: float = 0.25) -> None:
         if interval <= 0:

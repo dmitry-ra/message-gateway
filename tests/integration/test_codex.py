@@ -21,6 +21,7 @@ class AppServer:
         self.turn_id: object = "turn"
         self.failure = ""
         self.requests: list[dict[str, Any]] = []
+        self.notifications: list[dict[str, Any]] = []
 
     async def handle(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()
@@ -28,6 +29,9 @@ class AppServer:
         async for frame in ws:
             value = json.loads(frame.data)
             self.requests.append(value)
+            for notification in self.notifications:
+                await ws.send_json(notification)
+            self.notifications.clear()
             if "id" not in value:
                 continue
             method = value["method"]
@@ -99,8 +103,38 @@ def test_codex_success_and_formatting(tmp_path: Path) -> None:
             with pytest.raises(DeliveryBusy):
                 await adapter.send(messages)
             server.state = "notLoaded"
-            assert await adapter.readiness() == Readiness.UNKNOWN
+            assert await adapter.readiness() == Readiness.READY
         assert format_messages("thread", [])["threadId"] == "thread"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("state", ["idle", "notLoaded", "systemError", "futureState"])
+def test_codex_delivers_in_non_active_states(tmp_path: Path, state: str) -> None:
+    async def scenario() -> None:
+        server = AppServer()
+        server.state = server.resume_state = state
+        async with server.connect(tmp_path / "server.sock") as adapter:
+            assert await adapter.readiness() == Readiness.READY
+            assert await adapter.send([Message.create("c", {"event": 1})]) == "turn"
+            assert len([r for r in server.requests if r["method"] == "turn/start"]) == 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("method", ["thread/read", "thread/resume"])
+@pytest.mark.parametrize("state", [None, "", 42])
+def test_codex_rejects_invalid_states(tmp_path: Path, method: str, state: Any) -> None:
+    async def scenario() -> None:
+        server = AppServer()
+        if method == "thread/read":
+            server.state = state
+        else:
+            server.resume_state = state
+        async with server.connect(tmp_path / "server.sock") as adapter:
+            with pytest.raises(DeliveryBusy):
+                await adapter.send([Message.create("c", "x")])
+            assert not any(r["method"] == "turn/start" for r in server.requests)
 
     asyncio.run(scenario())
 
@@ -148,5 +182,106 @@ def test_codex_read_failures(tmp_path: Path, failure: str) -> None:
         with pytest.raises(OSError):
             await unconnected.readiness()
         assert unconnected.client is None
+
+    asyncio.run(scenario())
+
+
+def test_codex_diagnostics_filter_and_correlate(
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    caplog.set_level("INFO", logger="message_gateway.diagnostics")
+
+    async def scenario() -> None:
+        server = AppServer()
+        server.state = server.resume_state = "systemError"
+        error = {"codexErrorInfo": "server_overloaded", "message": "SECRET_BODY"}
+        server.notifications = [
+            {"method": "error", "params": {"threadId": "other", "error": error}},
+            {
+                "method": "error",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "failed",
+                    "error": error,
+                    "willRetry": False,
+                },
+            },
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turn": {
+                        "id": "failed",
+                        "status": "failed",
+                        "error": error,
+                        "items": ["SECRET_BODY"],
+                    },
+                },
+            },
+            {
+                "method": "error",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "retry",
+                    "error": {
+                        "codexErrorInfo": {
+                            "httpConnectionFailed": {"httpStatusCode": 503, "body": "SECRET_BODY"}
+                        }
+                    },
+                    "willRetry": True,
+                },
+            },
+            {
+                "method": "thread/status/changed",
+                "params": {"threadId": "thread", "status": {"type": "systemError"}},
+            },
+            {
+                "method": "thread/status/changed",
+                "params": {"threadId": "thread", "status": {"type": "systemError"}},
+            },
+            {
+                "method": "thread/status/changed",
+                "params": {
+                    "threadId": "thread",
+                    "status": {"type": "active", "activeFlags": ["waitingOnApproval"]},
+                },
+            },
+            {
+                "method": "item/agentMessage/delta",
+                "params": {"threadId": "thread", "delta": "SECRET_BODY"},
+            },
+            {"method": "error", "params": None},
+            {
+                "method": "turn/completed",
+                "params": {"threadId": "thread", "turn": None, "error": None},
+            },
+        ]
+        async with server.connect(tmp_path / "server.sock") as adapter:
+            await adapter.readiness()
+            await adapter.readiness()
+            assert await adapter.send([Message.create("c", "SECRET_BODY")]) == "turn"
+        events = [
+            json.loads(r.message) for r in caplog.records if r.name == "message_gateway.diagnostics"
+        ]
+        assert "SECRET_BODY" not in caplog.text
+        assert all(e["thread_id"] == "thread" for e in events)
+        states = [e for e in events if e["event"] == "codex_state"]
+        assert [(e["stage"], e["state"]) for e in states] == [
+            ("notification", "systemError"),
+            ("notification", "active"),
+            ("read", "systemError"),
+            ("resume", "systemError"),
+        ]
+        assert states[1]["active_flags"] == ["waitingOnApproval"]
+        turns = [e for e in events if e["event"] == "codex_turn"]
+        assert [(e["notification"], e["turn_id"]) for e in turns] == [
+            ("error", "failed"),
+            ("turn/completed", "failed"),
+            ("error", "retry"),
+            ("turn/completed", None),
+        ]
+        assert turns[0]["error_info"] == "serverOverloaded" and turns[0]["will_retry"] is False
+        assert turns[1]["status"] == "failed"
+        assert turns[2]["http_status"] == 503 and turns[2]["will_retry"] is True
 
     asyncio.run(scenario())

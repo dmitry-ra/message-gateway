@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import Coroutine
 from typing import Any
 
@@ -163,5 +164,121 @@ def test_cancellation_during_send() -> None:
             await task
         assert service.targets["work"].sending == 0
         assert service.targets["work"].last_result is not None
+
+    run(scenario())
+
+
+def test_diagnostics_explain_wait_and_delivery_without_poll_spam(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger="message_gateway.diagnostics")
+
+    async def scenario() -> None:
+        adapter = FakeAdapter(Readiness.BUSY)
+        service = Service({"work": Target(adapter)})
+        message = service.submit(
+            "work", "feed", "SECRET_BODY", sender="SECRET_SENDER", preview="SECRET_PREVIEW"
+        )
+        for _ in range(3):
+            await service.tick()
+        adapter.read_error = RuntimeError("SECRET_ERROR")
+        for _ in range(3):
+            await service.tick()
+        adapter.read_error = None
+        adapter.state = Readiness.READY
+        await service.tick()
+        await service.tick()
+        events = [
+            json.loads(r.message) for r in caplog.records if r.name == "message_gateway.diagnostics"
+        ]
+        assert "SECRET" not in caplog.text
+        states = [e for e in events if e["event"] == "destination_state"]
+        assert [(e["state"], e["reason"]) for e in states] == [
+            ("busy", "busy"),
+            ("unknown", "readiness_error"),
+            ("ready", "ready"),
+            ("ready", "sending"),
+            ("ready", "empty"),
+        ]
+        assert states[0]["queued"] == 1 and states[0]["oldest_received_at"] == message.received_at
+        assert states[1]["error_type"] == "RuntimeError"
+        delivery = [e for e in events if e["event"].startswith("delivery_")]
+        assert [e["event"] for e in delivery] == ["delivery_start", "delivery_accepted"]
+        assert all(e["target"] == "work" and e["messages"] == [message.id] for e in delivery)
+        assert "receipt" not in delivery[1]
+        assert states[-2]["sending"] == 1
+        assert states[-1]["sending"] == 0
+
+    run(scenario())
+
+
+@pytest.mark.parametrize(
+    "error,event",
+    [
+        (DeliveryBusy("SECRET_ERROR"), "delivery_deferred"),
+        (DeliveryUnknown("SECRET_ERROR"), "delivery_uncertain"),
+    ],
+)
+def test_delivery_failure_diagnostics(
+    caplog: pytest.LogCaptureFixture, error: Exception, event: str
+) -> None:
+    caplog.set_level("INFO", logger="message_gateway.diagnostics")
+
+    async def scenario() -> None:
+        adapter = FakeAdapter()
+        adapter.error = error
+        service = Service({"work": Target(adapter)})
+        message = service.submit("work", "feed", "SECRET_BODY")
+        await service.tick()
+        records = [
+            json.loads(r.message) for r in caplog.records if r.name == "message_gateway.diagnostics"
+        ]
+        outcome = next(r for r in records if r["event"] == event)
+        assert outcome["target"] == "work" and outcome["messages"] == [message.id]
+        assert len(service.targets["work"].queue) == (1 if isinstance(error, DeliveryBusy) else 0)
+        assert "SECRET" not in caplog.text
+        if isinstance(error, DeliveryUnknown):
+            assert outcome["error_type"] == "DeliveryUnknown"
+
+    run(scenario())
+
+
+def test_wait_diagnostics_update_queue_metrics_without_state_change(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger="message_gateway.diagnostics")
+
+    async def scenario() -> None:
+        service = Service({"work": Target(FakeAdapter(Readiness.BUSY))})
+        first = service.submit("work", "source", "first")
+        await service.tick()
+        await service.tick()
+        service.submit("work", "source", "second")
+        await service.tick()
+        states = [
+            json.loads(record.message)
+            for record in caplog.records
+            if '"event": "destination_state"' in record.message
+        ]
+        assert [state["queued"] for state in states] == [1, 2]
+        assert all(state["oldest_received_at"] == first.received_at for state in states)
+
+    run(scenario())
+
+
+def test_diagnostic_receipt_is_omitted(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("INFO", logger="message_gateway.diagnostics")
+
+    class ReceiptAdapter(FakeAdapter):
+        async def send(self, messages: list[Any]) -> str:
+            return "SECRET receipt prose"
+
+    async def scenario() -> None:
+        service = Service({"work": Target(ReceiptAdapter())})
+        service.submit("work", "test", "body")
+        await service.tick()
+        assert service.targets["work"].last_result is not None
+        assert service.targets["work"].last_result["receipt"] == "SECRET receipt prose"
+        assert "SECRET" not in caplog.text
 
     run(scenario())
