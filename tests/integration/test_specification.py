@@ -1,6 +1,7 @@
 import asyncio
 import json
 from importlib.resources import files
+from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
@@ -16,6 +17,10 @@ from tests.helpers import FakeAdapter, http_client
 def test_specification_matches_real_responses() -> None:
     spec = json.loads(files("message_gateway.interfaces").joinpath("openapi.json").read_text())
     assert spec["info"]["version"] == __version__
+    plugin = (
+        Path(__file__).resolve().parents[2] / "plugins/message-gateway/.codex-plugin/plugin.json"
+    )
+    assert json.loads(plugin.read_text())["version"] == __version__
     assert set(spec["components"]["schemas"]["Submission"]["properties"]) == set(
         Submission.model_fields
     )

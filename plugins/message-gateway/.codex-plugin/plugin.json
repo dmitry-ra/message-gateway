@@ -1,6 +1,6 @@
 {
   "name": "message-gateway",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Interpret external messages delivered by Message Gateway",
   "skills": "./skills/"
 }
