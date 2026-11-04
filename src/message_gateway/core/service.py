@@ -136,12 +136,13 @@ class Service:
             count = min(len(target.queue), self.batch_limit if target.batching else 1)
             messages = [target.queue.popleft() for _ in range(count)]
             target.sending = count
+            self._observe(name, target, "sending")
             ids = [message.id for message in messages]
             emit("delivery_start", target=name, messages=ids, queued=len(target.queue))
             try:
                 receipt = await target.adapter.send(messages)
                 target.last_result = {"status": "accepted", "messages": ids, "receipt": receipt}
-                emit("delivery_accepted", target=name, messages=ids, receipt=receipt)
+                emit("delivery_accepted", target=name, messages=ids)
             except DeliveryBusy:
                 target.queue.extendleft(reversed(messages))
                 target.state = Readiness.BUSY
@@ -157,6 +158,7 @@ class Service:
                 )
             finally:
                 target.sending = 0
+                self._observe(name, target, "empty" if not target.queue else target.state.value)
 
     async def run(self, interval: float = 0.25) -> None:
         if interval <= 0:

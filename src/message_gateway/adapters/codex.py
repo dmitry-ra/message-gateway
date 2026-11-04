@@ -201,7 +201,7 @@ def format_messages(
 
 def thread_readiness(thread: dict[str, Any]) -> Readiness:
     state = thread["status"]["type"]
-    if not isinstance(state, str) or not state:
+    if not isinstance(state, str) or not state.strip():
         raise DeliveryUnknown("Invalid thread status")
     return Readiness.BUSY if state == "active" else Readiness.READY
 
@@ -290,7 +290,7 @@ class CodexAdapter:
         if (
             not isinstance(status, dict)
             or not isinstance(status.get("type"), str)
-            or not status["type"]
+            or not status["type"].strip()
         ):
             raise DeliveryUnknown("Invalid thread status")
         return thread
