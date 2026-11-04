@@ -90,6 +90,23 @@ JSON whitespace and object-key spelling escapes are not retained. Text strings
 retain their characters and line endings.
 Target names contain 1-64 ASCII letters, digits, underscores, or hyphens.
 
+Codex targets can opt into interactive delivery with `interactive = true`.
+An active thread then accepts pending messages through `turn/steer`, using
+the observed active turn ID as `expectedTurnId`. A non-active thread uses
+`turn/start` as before. Full original content and additional context use the
+same formatter in both paths. Set `batching = false` for individual interactive
+messages; interactive delivery does not disable batching automatically.
+The default `interactive = false` preserves wait-until-not-active delivery.
+No policy is inferred from channel names or message contents.
+
+If the active turn changes and Codex definitely refuses steering, the batch
+stays queued for another attempt. An uncertain submission result is not retried
+automatically. A steering receipt confirms acceptance by Codex, not that the
+model has read the input or completed the requested work. Steering does not
+cancel running tools or guarantee an immediate response during provider errors,
+approval waits, review, or compaction. New-turn overrides such as `effort` are
+only applied to `turn/start`, never `turn/steer`.
+
 ## Codex plugin
 
 The plugin and its skill live in `plugins/message-gateway`. Install from the
@@ -112,12 +129,14 @@ items of at most 3000 bytes. Oversized individual messages are written as ready
 UTF-8 JSON documents in an adapter-owned temporary directory; the skill reads
 the document without reconstructing JSON fragments or calculating hashes. These
 files last for the adapter lifetime and are not persistent queue storage. The
-pure formatter retains legacy fragment framing for compatibility. This framing is independent of channel names and source schemas and
-still starts one turn per batch. The model's overall context window remains
-a separate limit.
+pure formatter retains legacy fragment framing for compatibility. Framing is
+independent of channel names and source schemas. A ready non-active thread starts
+one turn per batch; interactive delivery can instead steer its active turn.
+The model's overall context window remains a separate limit.
 
 The adapter is tested with Codex 0.166.0 on Linux using its Unix WebSocket.
-Delivery waits only while the thread reports `active`. Other nonempty string
+By default delivery waits while the thread reports `active`. Interactive
+targets instead attempt steering of an active turn. Other nonempty string
 states, including `idle`, `notLoaded`, and `systemError`, permit an attempt to
 resume the existing thread and start a turn. The same check runs after resume.
 Failed state reads and malformed states do not permit delivery. App Server
@@ -144,6 +163,10 @@ error prose and full RPC envelopes are not logged.
 - `delivery_start`, `delivery_accepted`, `delivery_deferred` and
   `delivery_uncertain`: destination and message IDs, plus receipt or error
   class where available. Uncertain results are still not retried.
+- `codex_delivery`: native delivery method (`turn/start` or `turn/steer`) and
+  expected active turn ID when steering. No message content is logged.
+- `codex_delivery_deferred`: interactive preparation failed before any input
+  submission; stage and error class explain why the batch remains queued.
 - `codex_turn`: received `error` or `turn/completed` notifications for the
   configured thread, including turn identity, status, error classification,
   HTTP status when supplied and `will_retry`.
