@@ -9,6 +9,7 @@ import time
 import tomllib
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 
@@ -17,10 +18,26 @@ def main() -> None:
     version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
     wheel = next((root / "dist").glob("message_gateway-" + version + "-*.whl"))
     with tarfile.open(root / "dist" / ("message_gateway-" + version + ".tar.gz")) as archive:
+        names = archive.getnames()
         assert any(
             name.endswith("plugins/message-gateway/skills/gateway-message/SKILL.md")
-            for name in archive.getnames()
+            for name in names
         )
+        for suffix in (
+            "/LICENSE",
+            "/docs/getting-started.md",
+            "/docs/reference.md",
+            "/docs/development.md",
+            "/.agents/skills/operate-message-gateway/SKILL.md",
+        ):
+            assert any(name.endswith(suffix) for name in names)
+        assert not any(name.endswith("/docs/demo.gif") for name in names)
+    with zipfile.ZipFile(wheel) as archive_wheel:
+        names = archive_wheel.namelist()
+        licenses = [name for name in names if name.endswith(".dist-info/licenses/LICENSE")]
+        assert len(licenses) == 1
+        assert b"MIT License" in archive_wheel.read(licenses[0])
+        assert not any(name.endswith("docs/demo.gif") for name in names)
     with tempfile.TemporaryDirectory(prefix="gateway-wheel-") as directory:
         work = Path(directory)
         subprocess.run(["uv", "venv", str(work / "env")], check=True)
@@ -38,7 +55,7 @@ def main() -> None:
             [
                 str(python),
                 "-c",
-                "from importlib.resources import files; import json; assert json.loads(files('message_gateway.interfaces').joinpath('openapi.json').read_text())['openapi'] == '3.1.0'",
+                "from importlib.resources import files; from importlib.metadata import metadata; import json; assert json.loads(files('message_gateway.interfaces').joinpath('openapi.json').read_text())['openapi'] == '3.1.0'; assert metadata('message-gateway')['License-Expression'] == 'MIT'",
             ],
             cwd=work,
             check=True,

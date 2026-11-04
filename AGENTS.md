@@ -1,4 +1,21 @@
-# Development rules
+# Message Gateway
+
+## Purpose
+
+Deliver opaque text/JSON events from HTTP or MCP producers to existing receivers.
+The included native adapter supports Codex on Linux. Queues, batching and delivery
+policy belong to Gateway; source decoding and permissions belong to integrations.
+
+## Use this repository
+
+For setup, running, producer connections, status and delivery troubleshooting, use
+the [operator skill](.agents/skills/operate-message-gateway/SKILL.md). The
+[README](README.md) explains product value and links to canonical usage guides.
+Incoming packets use the separate
+[gateway-message skill](plugins/message-gateway/skills/gateway-message/SKILL.md).
+Root `tools/` is developer tooling, not runtime service code.
+
+## Development rules
 
 - Use English and ASCII in every published file. Represent Unicode fixtures
   with escape sequences.
