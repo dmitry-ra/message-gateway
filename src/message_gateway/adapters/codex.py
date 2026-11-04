@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import re
 import tempfile
 import textwrap
 from dataclasses import asdict
@@ -199,21 +200,55 @@ def format_messages(
     }
 
 
-def thread_readiness(thread: dict[str, Any]) -> Readiness:
+def turn_identity(value: object) -> str | None:
+    if (
+        isinstance(value, str)
+        and 1 <= len(value) <= 128
+        and all(c.isascii() and (c.isalnum() or c in "-_") for c in value)
+    ):
+        return value
+    return None
+
+
+def thread_readiness(thread: dict[str, Any], *, interactive: bool = False) -> Readiness:
     state = thread["status"]["type"]
     if not isinstance(state, str) or not state.strip():
         raise DeliveryUnknown("Invalid thread status")
-    return Readiness.BUSY if state == "active" else Readiness.READY
+    return Readiness.BUSY if state == "active" and not interactive else Readiness.READY
+
+
+def steer_refused(params: dict[str, object], error: object) -> bool:
+    """Recognize only native, explicit non-submission errors, never generic failures."""
+    if not isinstance(error, dict) or error.get("code") != -32600:
+        return False
+    message = error.get("message")
+    if message in (
+        "no active turn to steer",
+        "cannot steer a review turn",
+        "cannot steer a compact turn",
+    ):
+        return True
+    if not isinstance(message, str):
+        return False
+    mismatch = re.fullmatch(r"expected active turn id `([^`]+)` but found `([^`]+)`", message)
+    return mismatch is not None and mismatch[1] == params.get("expectedTurnId")
 
 
 class CodexAdapter:
     def __init__(
-        self, thread: str, socket: Path, *, timeout: float = 10, effort: str | None = None
+        self,
+        thread: str,
+        socket: Path,
+        *,
+        timeout: float = 10,
+        effort: str | None = None,
+        interactive: bool = False,
     ) -> None:
         self.thread = thread
         self.socket = socket
         self.timeout = timeout
         self.effort = effort
+        self.interactive = interactive
         self.documents = tempfile.TemporaryDirectory(prefix="message-gateway-context-")
         self.client: aiohttp.ClientSession | None = None
         self.ws: aiohttp.ClientWebSocketResponse | None = None
@@ -240,7 +275,7 @@ class CodexAdapter:
                 stage=stage,
                 state=logged_state,
                 active_flags=flags,
-                readiness=(Readiness.BUSY if state == "active" else Readiness.READY).value,
+                readiness=thread_readiness({"status": status}, interactive=self.interactive).value,
             )
 
     def _notification(self, response: dict[str, Any]) -> None:
@@ -264,13 +299,7 @@ class CodexAdapter:
         error = params.get("error", turn.get("error"))
         error = error if isinstance(error, dict) else {}
         info, http_status = diagnostic_error_info(error.get("codexErrorInfo"))
-        turn_id = params.get("turnId", turn.get("id"))
-        if (
-            not isinstance(turn_id, str)
-            or not 1 <= len(turn_id) <= 128
-            or not all(c.isascii() and (c.isalnum() or c in "-_") for c in turn_id)
-        ):
-            turn_id = None
+        turn_id = turn_identity(params.get("turnId", turn.get("id")))
         turn_status = turn.get("status")
         if turn_status not in ("inProgress", "completed", "interrupted", "failed"):
             turn_status = None
@@ -338,6 +367,8 @@ class CodexAdapter:
                 if response.get("id") != request_id:
                     continue
                 if "error" in response:
+                    if method == "turn/steer" and steer_refused(params, response["error"]):
+                        raise DeliveryBusy("Active turn explicitly refused input")
                     raise DeliveryUnknown("App Server error: " + json.dumps(response["error"]))
                 result = response.get("result")
                 if not isinstance(result, dict):
@@ -350,13 +381,15 @@ class CodexAdapter:
             result = await self._request(
                 "thread/read", {"threadId": self.thread, "includeTurns": False}
             )
+
             thread = self._thread(result)
             state = thread["status"]["type"]
             if state == "idle":
                 # An observed idle receiver has finished its previous turn.
                 for path in Path(self.documents.name).glob("*.json"):
                     path.unlink()
-            readiness = thread_readiness(thread)
+            readiness = thread_readiness(thread, interactive=self.interactive)
+
             self._observe_state(thread["status"], "read")
             return readiness
         except Exception:
@@ -365,32 +398,76 @@ class CodexAdapter:
 
     async def send(self, messages: list[Message]) -> str:
         input_attempted = False
+
+        stage = "readiness"
         try:
             if await self.readiness() != Readiness.READY:
                 raise DeliveryBusy("Thread is no longer ready")
+            stage = "resume"
             result = await self._request(
                 "thread/resume", {"threadId": self.thread, "excludeTurns": True}
             )
             thread = self._thread(result)
-            readiness = thread_readiness(thread)
+            readiness = thread_readiness(thread, interactive=self.interactive)
             self._observe_state(thread["status"], "resume")
+
             if readiness == Readiness.BUSY:
                 raise DeliveryBusy("Thread became busy while subscribing")
+            thread = result["thread"]
+            stage = "format"
             params = format_messages(self.thread, messages, Path(self.documents.name))
-            if self.effort is not None:
+            method = "turn/start"
+            expected_turn = None
+            if thread["status"]["type"] == "active":
+                stage = "turn_lookup"
+                result = await self._request(
+                    "thread/turns/list",
+                    {
+                        "threadId": self.thread,
+                        "limit": 1,
+                        "sortDirection": "desc",
+                        "itemsView": "notLoaded",
+                    },
+                )
+                turns = result["data"]
+                if not isinstance(turns, list):
+                    raise DeliveryUnknown("Invalid turn list")
+                active = [turn for turn in turns if turn.get("status") == "inProgress"]
+                if len(active) != 1:
+                    raise DeliveryBusy("Active turn identity is not available")
+                expected_turn = turn_identity(active[0]["id"])
+                if expected_turn is None:
+                    raise DeliveryUnknown("Invalid active turn identity")
+                params["expectedTurnId"] = expected_turn
+                method = "turn/steer"
+            elif self.effort is not None:
                 params["effort"] = self.effort
+
+            emit("codex_delivery", thread_id=self.thread, method=method, turn_id=expected_turn)
             input_attempted = True
-            result = await self._request("turn/start", params)
-            receipt = result["turn"]["id"]
-            if not isinstance(receipt, str):
+            result = await self._request(method, params)
+            receipt = turn_identity(
+                result["turnId"] if method == "turn/steer" else result["turn"]["id"]
+            )
+            if receipt is None or (method == "turn/steer" and receipt != expected_turn):
+
                 raise DeliveryUnknown("Missing turn receipt")
             return receipt
         except DeliveryBusy:
             raise
         except Exception as error:
             await self.close()
+
             if not input_attempted:
-                raise DeliveryBusy("Input preparation failed before submission") from error
+                emit(
+                    "codex_delivery_deferred",
+                    thread_id=self.thread,
+                    reason="preflight_error",
+                    stage=stage,
+                    error_type=type(error).__name__,
+                )
+                raise DeliveryBusy("Input was not submitted; preparation failed") from error
+
             raise DeliveryUnknown(str(error)) from error
 
     async def close(self) -> None:

@@ -22,6 +22,7 @@ def load_service(path: Path) -> Service:
     for item in configuration.get("targets", []):
         name, thread = item["name"], item["thread"]
         batching = item.get("batching", True)
+        interactive = item.get("interactive", False)
         effort = item.get("effort")
         if effort is not None and effort not in (
             "minimal",
@@ -39,12 +40,19 @@ def load_service(path: Path) -> Service:
             or name in targets
         ):
             raise ValueError("Target names must be unique, 1-64 ASCII letters, digits, '_' or '-'")
-        if not isinstance(thread, str) or not thread or not isinstance(batching, bool):
-            raise ValueError("Thread must be a string and batching a boolean")
+        if (
+            not isinstance(thread, str)
+            or not thread
+            or not isinstance(batching, bool)
+            or not isinstance(interactive, bool)
+        ):
+            raise ValueError("Thread must be a string; batching and interactive must be booleans")
         socket = Path(
             item.get("socket", "~/.codex/app-server-control/app-server-control.sock")
         ).expanduser()
-        targets[name] = Target(CodexAdapter(thread, socket, effort=effort), batching=batching)
+        targets[name] = Target(
+            CodexAdapter(thread, socket, effort=effort, interactive=interactive), batching=batching
+        )
     return Service(targets)
 
 
