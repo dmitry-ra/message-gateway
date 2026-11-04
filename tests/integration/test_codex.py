@@ -609,3 +609,24 @@ def test_interactive_preflight_failures_preserve_fifo_until_recovery(
             assert [message["id"] for message in packet["messages"]] == [first.id, second.id]
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("identity", ["SECRET PROSE", "x" * 129, "caf\u00e9", None])
+def test_malformed_active_identity_is_not_logged_or_submitted(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, identity: object
+) -> None:
+    caplog.set_level("INFO", logger="message_gateway.diagnostics")
+
+    async def scenario() -> None:
+        server = AppServer()
+        server.state = server.resume_state = "active"
+        server.turns = [{"id": identity, "status": "inProgress"}]
+        async with server.connect(tmp_path / "server.sock", interactive=True) as adapter:
+            service = Service({"chat": Target(adapter)})
+            queued = service.submit("chat", "test", "content")
+            await service.tick()
+            assert list(service.targets["chat"].queue) == [queued]
+            assert not any(r["method"].startswith("turn/") for r in server.requests)
+        assert "SECRET" not in caplog.text
+
+    asyncio.run(scenario())

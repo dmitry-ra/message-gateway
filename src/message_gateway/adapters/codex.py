@@ -200,6 +200,16 @@ def format_messages(
     }
 
 
+def turn_identity(value: object) -> str | None:
+    if (
+        isinstance(value, str)
+        and 1 <= len(value) <= 128
+        and all(c.isascii() and (c.isalnum() or c in "-_") for c in value)
+    ):
+        return value
+    return None
+
+
 def thread_readiness(thread: dict[str, Any], *, interactive: bool = False) -> Readiness:
     state = thread["status"]["type"]
     if not isinstance(state, str) or not state.strip():
@@ -285,13 +295,7 @@ class CodexAdapter:
         error = params.get("error", turn.get("error"))
         error = error if isinstance(error, dict) else {}
         info, http_status = diagnostic_error_info(error.get("codexErrorInfo"))
-        turn_id = params.get("turnId", turn.get("id"))
-        if (
-            not isinstance(turn_id, str)
-            or not 1 <= len(turn_id) <= 128
-            or not all(c.isascii() and (c.isalnum() or c in "-_") for c in turn_id)
-        ):
-            turn_id = None
+        turn_id = turn_identity(params.get("turnId", turn.get("id")))
         turn_status = turn.get("status")
         if turn_status not in ("inProgress", "completed", "interrupted", "failed"):
             turn_status = None
@@ -427,8 +431,8 @@ class CodexAdapter:
                 active = [turn for turn in turns if turn.get("status") == "inProgress"]
                 if len(active) != 1:
                     raise DeliveryBusy("Active turn identity is not available")
-                expected_turn = active[0]["id"]
-                if not isinstance(expected_turn, str) or not expected_turn:
+                expected_turn = turn_identity(active[0]["id"])
+                if expected_turn is None:
                     raise DeliveryUnknown("Invalid active turn identity")
                 params["expectedTurnId"] = expected_turn
                 method = "turn/steer"
@@ -438,12 +442,10 @@ class CodexAdapter:
             emit("codex_delivery", thread_id=self.thread, method=method, turn_id=expected_turn)
             input_attempted = True
             result = await self._request(method, params)
-            receipt = result["turnId"] if method == "turn/steer" else result["turn"]["id"]
-            if (
-                not isinstance(receipt, str)
-                or not receipt
-                or (method == "turn/steer" and receipt != expected_turn)
-            ):
+            receipt = turn_identity(
+                result["turnId"] if method == "turn/steer" else result["turn"]["id"]
+            )
+            if receipt is None or (method == "turn/steer" and receipt != expected_turn):
 
                 raise DeliveryUnknown("Missing turn receipt")
             return receipt
