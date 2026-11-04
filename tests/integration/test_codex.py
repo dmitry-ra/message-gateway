@@ -595,6 +595,7 @@ def test_interactive_preflight_failures_preserve_fifo_until_recovery(
             )
             assert isinstance(event["error_type"], str)
             server.prepare_method = ""
+            adapter.timeout = 1
             await service.tick()
             assert not service.targets["chat"].queue
             result = service.targets["chat"].last_result
