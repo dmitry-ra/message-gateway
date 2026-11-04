@@ -1,7 +1,26 @@
-# Development rules
+# Message Gateway
 
-- Use English and ASCII in every published file. Represent Unicode fixtures
-  with escape sequences.
+## Purpose
+
+Deliver opaque text/JSON events from HTTP or MCP producers to existing receivers.
+The included native adapter supports Codex on Linux. Queues, batching and delivery
+policy belong to Gateway; source decoding and permissions belong to integrations.
+
+## Use this repository
+
+For setup, running, producer connections, status and delivery troubleshooting, use
+the [operator skill](.agents/skills/operate-message-gateway/SKILL.md). The
+[README](README.md) explains product value and links to canonical usage guides.
+Incoming packets use the separate
+[gateway-message skill](plugins/message-gateway/skills/gateway-message/SKILL.md).
+Root `tools/` is developer tooling, not runtime service code.
+
+## Development rules
+
+- Use English and ASCII in every published text file. Represent Unicode fixtures
+  with escape sequences. The owned documentation GIF at `docs/demo.gif` is the
+  only binary exception; `tools/check.py` validates its exact path, format and
+  size. Do not add other binary assets without an explicit scoped rule.
 - Commit messages describe project changes only. Do not add tool attribution,
   generated-by text, or co-author trailers.
 - Work on a feature branch. Changes reach main through a pull request.
