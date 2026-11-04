@@ -1,9 +1,11 @@
 import asyncio
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from tools import demo
 from tools.check import check_file
 from tools.demo import play, sanitize_recording, scan_recording
 
@@ -104,3 +106,58 @@ def test_sanitizing_trims_startup_without_fabricating_output_or_event_intervals(
     assert "command" not in result[0]
     assert result[0]["env"] == {"TERM": "xterm-256color"}
     assert raw.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "scenario", ["success", "recorder-fails", "nonzero-exit", "private-output"]
+)
+def test_recording_pipeline_handoff_and_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+) -> None:
+    output = tmp_path / "capture"
+    invoked: list[str] = []
+
+    def version(command: list[str], *, text: bool) -> str:
+        assert text
+        return {
+            "asciinema": "asciinema 3.2.1",
+            "agg": "agg 1.9.0",
+            "ffmpeg": "ffmpeg version 6.1.1",
+        }[command[0]]
+
+    def run(command: list[str], **kwargs: object) -> None:
+        invoked.append(command[0])
+        if command[0] == "asciinema":
+            if scenario == "recorder-fails":
+                raise subprocess.CalledProcessError(1, command)
+            content = "/home/private/recording" if scenario == "private-output" else "Queued: 2"
+            status = 1 if scenario == "nonzero-exit" else 0
+            records = [
+                {"version": 2, "command": "recorder metadata"},
+                [0.8, "o", content],
+                [1.8, "o", "Batch received"],
+                [2, "x", status],
+            ]
+            Path(command[-1]).write_text("\n".join(map(json.dumps, records)) + "\n")
+        elif command[0] == "agg":
+            records = [json.loads(line) for line in Path(command[-2]).read_text().splitlines()]
+            assert "command" not in records[0]
+            assert records[1:] == [[0, "o", "Queued: 2"], [1, "o", "Batch received"]]
+            Path(command[-1]).write_bytes(GIF)
+        else:
+            assert command[0] == "ffmpeg" and (output / "demo.gif").is_file()
+            Path(command[-1]).write_bytes(b"synthetic test image")
+
+    monkeypatch.setattr(subprocess, "check_output", version)
+    monkeypatch.setattr(subprocess, "run", run)
+    if scenario != "success":
+        with pytest.raises((subprocess.CalledProcessError, ValueError)):
+            demo.record(output)
+        assert invoked == ["asciinema"]
+        assert not (output / "demo.cast").exists() and not (output / "demo.gif").exists()
+    else:
+        demo.record(output)
+        assert invoked == ["asciinema", "agg", "ffmpeg", "ffmpeg"]
+        assert (output / "poster.png").is_file() and (output / "contact-sheet.png").is_file()
