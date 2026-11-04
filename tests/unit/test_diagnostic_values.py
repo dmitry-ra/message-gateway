@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from message_gateway.adapters.codex import CodexAdapter, diagnostic_error_info
+from message_gateway.adapters.codex import CodexAdapter, diagnostic_error_info, thread_readiness
 
 
 @pytest.mark.parametrize(
@@ -55,3 +55,11 @@ def test_notification_diagnostics_sanitize_other_source_fields(
     assert events[0]["status"] is None
     assert events[0]["will_retry"] is None
     assert events[1]["state"] == "unknown" and events[1]["active_flags"] == []
+
+
+@pytest.mark.parametrize("state", ["", " ", "\t\n"])
+def test_whitespace_state_is_unknown(state: str) -> None:
+    from message_gateway.core.models import DeliveryUnknown
+
+    with pytest.raises(DeliveryUnknown):
+        thread_readiness({"status": {"type": state}})

@@ -162,17 +162,19 @@ timestamp. With systemd, read them using `journalctl --user -u UNIT -o cat`.
 The diagnostic fields are an allowlist; message bodies, previews, senders,
 error prose and full RPC envelopes are not logged.
 
-- `codex_state`: thread identity, raw state type, active flags, derived
+- `codex_state`: thread identity, normalized state type, active flags, derived
   readiness and observation stage (`read`, `resume` or `notification`).
 - `destination_state`: destination, readiness, wait reason, queue and
   in-flight counts, oldest queued arrival and readiness error class.
 - `delivery_start`, `delivery_accepted`, `delivery_deferred` and
-  `delivery_uncertain`: destination and message IDs, plus receipt or error
-  class where available. Uncertain results are still not retried.
+
+  `delivery_uncertain`: destination and message IDs, plus error
+  class where available. Adapter receipts are omitted from diagnostics. Uncertain results are still not retried.
 - `codex_delivery`: native delivery method (`turn/start` or `turn/steer`) and
   expected active turn ID when steering. No message content is logged.
 - `codex_delivery_deferred`: interactive preparation failed before any input
   submission; stage and error class explain why the batch remains queued.
+
 - `codex_turn`: received `error` or `turn/completed` notifications for the
   configured thread, including turn identity, status, error classification,
   HTTP status when supplied and `will_retry`.

@@ -197,6 +197,7 @@ def test_diagnostics_explain_wait_and_delivery_without_poll_spam(
             ("busy", "busy"),
             ("unknown", "readiness_error"),
             ("ready", "ready"),
+            ("ready", "sending"),
             ("ready", "empty"),
         ]
         assert states[0]["queued"] == 1 and states[0]["oldest_received_at"] == message.received_at
@@ -204,7 +205,9 @@ def test_diagnostics_explain_wait_and_delivery_without_poll_spam(
         delivery = [e for e in events if e["event"].startswith("delivery_")]
         assert [e["event"] for e in delivery] == ["delivery_start", "delivery_accepted"]
         assert all(e["target"] == "work" and e["messages"] == [message.id] for e in delivery)
-        assert delivery[1]["receipt"] == "receipt"
+        assert "receipt" not in delivery[1]
+        assert states[-2]["sending"] == 1
+        assert states[-1]["sending"] == 0
 
     run(scenario())
 
@@ -259,5 +262,23 @@ def test_wait_diagnostics_update_queue_metrics_without_state_change(
         ]
         assert [state["queued"] for state in states] == [1, 2]
         assert all(state["oldest_received_at"] == first.received_at for state in states)
+
+    run(scenario())
+
+
+def test_diagnostic_receipt_is_omitted(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("INFO", logger="message_gateway.diagnostics")
+
+    class ReceiptAdapter(FakeAdapter):
+        async def send(self, messages: list[Any]) -> str:
+            return "SECRET receipt prose"
+
+    async def scenario() -> None:
+        service = Service({"work": Target(ReceiptAdapter())})
+        service.submit("work", "test", "body")
+        await service.tick()
+        assert service.targets["work"].last_result is not None
+        assert service.targets["work"].last_result["receipt"] == "SECRET receipt prose"
+        assert "SECRET" not in caplog.text
 
     run(scenario())

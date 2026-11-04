@@ -478,7 +478,7 @@ def test_uncertain_steer_is_not_replayed(tmp_path: Path, failure: str) -> None:
         else:
             server.failure = failure
         async with server.connect(
-            tmp_path / "server.sock", timeout=0.02, interactive=True
+            tmp_path / "server.sock", timeout=0.02 if failure == "timeout" else 1, interactive=True
         ) as adapter:
             service = Service({"chat": Target(adapter)})
             service.submit("chat", "c", "original")
@@ -568,7 +568,7 @@ def test_interactive_preflight_failures_preserve_fifo_until_recovery(
         # Service checks readiness before dequeuing; exercise the send-side read.
         server.prepare_after = 2 if method == "thread/read" else 1
         async with server.connect(
-            tmp_path / "server.sock", timeout=0.02, interactive=True
+            tmp_path / "server.sock", timeout=0.02 if failure == "timeout" else 1, interactive=True
         ) as adapter:
             service = Service({"chat": Target(adapter)})
             first = service.submit("chat", "c", "first")

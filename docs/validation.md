@@ -23,6 +23,27 @@ Package, CLI, OpenAPI, lockfile and plugin versions share the same release serie
 Earlier branch prototypes reached 0.4.0 before a development version reset;
 0.5.0 starts the integrated series without reusing those prototype versions.
 
+## Native interactive acceptance (0.6.0)
+
+On 2026-11-04 the opt-in interactive test passed against Codex 0.166.0 on
+Linux. It creates a dedicated thread and archives it afterward, without using
+an existing user conversation. Run explicitly with:
+
+```sh
+MESSAGE_GATEWAY_TEST_INTERACTIVE=1 uv run --locked pytest -o addopts= --import-mode=importlib -m live -s tests/live/test_codex.py -k interactive
+```
+
+An initial turn was active when the service submitted full JSON content with a
+random token absent from its display preview. The adapter used `turn/steer`,
+received exactly the original turn ID, and observed that turn still in progress
+after acceptance. The completed answer contained the token. The thread contained
+one turn and the adapter made no `turn/start` call. This verifies this native
+path, not a delivery latency guarantee or universal processing acknowledgment.
+
+A new persisted thread is required: ephemeral native threads have no resumable
+rollout. The test tolerates the short initial rollout persistence race, while
+normal service preflight deferral retains definitely-unsent FIFO input.
+
 ## Historical prototype observations
 
 The following records describe tests performed on earlier development snapshots,
