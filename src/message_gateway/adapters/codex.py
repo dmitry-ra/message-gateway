@@ -19,6 +19,53 @@ from message_gateway.diagnostics import emit
 CONTEXT_FRAGMENT_BYTES = 3000
 CONTEXT_DOCUMENT_BYTES = 64 * 1024 * 1024
 CONTEXT_DOCUMENT_FILES = 1000
+ERROR_NAMES = frozenset(
+    (
+        "contextWindowExceeded",
+        "sessionBudgetExceeded",
+        "usageLimitExceeded",
+        "rateLimitExceeded",
+        "flexUnavailable",
+        "serverOverloaded",
+        "modelNotFound",
+        "policyCapacityUnavailable",
+        "cyberPolicy",
+        "misalignmentPolicyViolation",
+        "tooManyDenials",
+        "internalServerError",
+        "unauthorized",
+        "badRequest",
+        "threadRollbackFailed",
+        "sandboxError",
+        "other",
+    )
+)
+ERROR_DETAILS = frozenset(
+    (
+        "httpConnectionFailed",
+        "responseStreamConnectionFailed",
+        "responseStreamDisconnected",
+        "responseTooManyFailedAttempts",
+        "activeTurnNotSteerable",
+    )
+)
+
+
+def diagnostic_error_info(value: object) -> tuple[str | list[str] | None, int | None]:
+    if value == "server_overloaded":
+        return "serverOverloaded", None
+    if isinstance(value, str):
+        return (value if value in ERROR_NAMES else None), None
+    if not isinstance(value, dict):
+        return None, None
+    names = [name for name in value if name in ERROR_DETAILS]
+    http_status = None
+    for name in names:
+        details = value[name]
+        status = details.get("httpStatusCode") if isinstance(details, dict) else None
+        if type(status) is int and 100 <= status <= 599:
+            http_status = status
+    return names or None, http_status
 
 
 def packet_context(
@@ -177,18 +224,21 @@ class CodexAdapter:
         state = status["type"]
         flags = status.get("activeFlags")
         flags = (
-            tuple(flag for flag in flags if isinstance(flag, str))
+            tuple(flag for flag in flags if flag in ("waitingOnApproval", "waitingOnUserInput"))
             if isinstance(flags, list)
             else ()
         )
-        observation = (state, flags)
+        logged_state = (
+            state if state in ("idle", "active", "notLoaded", "systemError") else "unknown"
+        )
+        observation = (logged_state, flags)
         if self.observed_states.get(stage) != observation:
             self.observed_states[stage] = observation
             emit(
                 "codex_state",
                 thread_id=self.thread,
                 stage=stage,
-                state=state,
+                state=logged_state,
                 active_flags=flags,
                 readiness=(Readiness.BUSY if state == "active" else Readiness.READY).value,
             )
@@ -209,22 +259,27 @@ class CodexAdapter:
         turn = turn if isinstance(turn, dict) else {}
         error = params.get("error", turn.get("error"))
         error = error if isinstance(error, dict) else {}
-        info = error.get("codexErrorInfo")
-        http_status = None
-        if isinstance(info, dict):
-            for details in info.values():
-                if isinstance(details, dict) and isinstance(details.get("httpStatusCode"), int):
-                    http_status = details["httpStatusCode"]
-            info = list(info)
+        info, http_status = diagnostic_error_info(error.get("codexErrorInfo"))
+        turn_id = params.get("turnId", turn.get("id"))
+        if (
+            not isinstance(turn_id, str)
+            or not 1 <= len(turn_id) <= 128
+            or not all(c.isascii() and (c.isalnum() or c in "-_") for c in turn_id)
+        ):
+            turn_id = None
+        turn_status = turn.get("status")
+        if turn_status not in ("inProgress", "completed", "interrupted", "failed"):
+            turn_status = None
+        will_retry = params.get("willRetry")
         emit(
             "codex_turn",
             thread_id=self.thread,
             notification=method,
-            turn_id=params.get("turnId", turn.get("id")),
-            status=turn.get("status"),
+            turn_id=turn_id,
+            status=turn_status,
             error_info=info,
             http_status=http_status,
-            will_retry=params.get("willRetry"),
+            will_retry=will_retry if type(will_retry) is bool else None,
         )
 
     def _thread(self, result: dict[str, Any]) -> dict[str, Any]:

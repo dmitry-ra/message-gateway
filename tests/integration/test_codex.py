@@ -132,7 +132,7 @@ def test_codex_rejects_invalid_states(tmp_path: Path, method: str, state: Any) -
         else:
             server.resume_state = state
         async with server.connect(tmp_path / "server.sock") as adapter:
-            with pytest.raises(DeliveryUnknown):
+            with pytest.raises(DeliveryBusy):
                 await adapter.send([Message.create("c", "x")])
             assert not any(r["method"] == "turn/start" for r in server.requests)
 
@@ -280,7 +280,7 @@ def test_codex_diagnostics_filter_and_correlate(
             ("error", "retry"),
             ("turn/completed", None),
         ]
-        assert turns[0]["error_info"] == "server_overloaded" and turns[0]["will_retry"] is False
+        assert turns[0]["error_info"] == "serverOverloaded" and turns[0]["will_retry"] is False
         assert turns[1]["status"] == "failed"
         assert turns[2]["http_status"] == 503 and turns[2]["will_retry"] is True
 

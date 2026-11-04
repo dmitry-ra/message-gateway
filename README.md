@@ -152,6 +152,11 @@ error prose and full RPC envelopes are not logged.
   configured thread, including turn identity, status, error classification,
   HTTP status when supplied and `will_retry`.
 
+Native error classifications, states, active flags and turn statuses are
+normalized to known protocol values before logging. Unknown error prose and
+keys are omitted; HTTP statuses must be integers from 100 through 599. Queue
+observations update when queue metrics change even if readiness is unchanged.
+
 State and wait observations are emitted only when they change; unchanged
 polls do not generate repeated records. Turn notifications are observed while
 the adapter receives App Server frames on its existing connection; they are

@@ -24,7 +24,7 @@ class Target:
     state: Readiness = Readiness.UNKNOWN
     sending: int = 0
     last_result: dict[str, object] | None = None
-    observation: tuple[str, str, str | None] | None = None
+    observation: tuple[str, str, str | None, int, int, str | None] | None = None
 
 
 class Service:
@@ -97,7 +97,15 @@ class Service:
     def _observe(
         self, name: str, target: Target, reason: str, error_type: str | None = None
     ) -> None:
-        observation = (target.state.value, reason, error_type)
+        oldest = target.queue[0].received_at if target.queue else None
+        observation = (
+            target.state.value,
+            reason,
+            error_type,
+            len(target.queue),
+            target.sending,
+            oldest,
+        )
         if target.observation != observation:
             target.observation = observation
             emit(
@@ -107,7 +115,7 @@ class Service:
                 reason=reason,
                 queued=len(target.queue),
                 sending=target.sending,
-                oldest_received_at=target.queue[0].received_at if target.queue else None,
+                oldest_received_at=oldest,
                 error_type=error_type,
             )
 

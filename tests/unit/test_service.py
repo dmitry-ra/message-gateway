@@ -238,3 +238,26 @@ def test_delivery_failure_diagnostics(
             assert outcome["error_type"] == "DeliveryUnknown"
 
     run(scenario())
+
+
+def test_wait_diagnostics_update_queue_metrics_without_state_change(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger="message_gateway.diagnostics")
+
+    async def scenario() -> None:
+        service = Service({"work": Target(FakeAdapter(Readiness.BUSY))})
+        first = service.submit("work", "source", "first")
+        await service.tick()
+        await service.tick()
+        service.submit("work", "source", "second")
+        await service.tick()
+        states = [
+            json.loads(record.message)
+            for record in caplog.records
+            if '"event": "destination_state"' in record.message
+        ]
+        assert [state["queued"] for state in states] == [1, 2]
+        assert all(state["oldest_received_at"] == first.received_at for state in states)
+
+    run(scenario())
