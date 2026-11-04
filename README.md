@@ -17,7 +17,7 @@ flowchart LR
   G -->|"Batch or steer"| C["Existing Codex conversation"]
 ```
 
-![Two build events wait in Gateway's queue, then reach the simulated receiver as one batch.](docs/demo.gif)
+![Two build events wait in Gateway's queue, then reach the simulated receiver as one batch.](https://raw.githubusercontent.com/dmitry-ra/message-gateway/main/docs/demo.gif)
 
 Actual HTTP gateway and queue; synthetic build events and a simulated receiver. [Reproduce the recording](docs/development.md#usage-demo).
 

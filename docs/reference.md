@@ -68,7 +68,7 @@ are never sent to `turn/steer`.
 
 | Endpoint | Meaning |
 | --- | --- |
-| `POST /v1/targets/{target}/messages` | Queue one message; HTTP202 means accepted in memory |
+| `POST /v1/targets/{target}/messages` | Queue one message; HTTP 202 means accepted in memory |
 | `GET /v1/targets` | Read destination readiness, queue/in-flight counts and latest transport result |
 | `GET /openapi.json` | Read the versioned contract |
 
@@ -94,7 +94,7 @@ compatibility proxy. REST submission URLs are unchanged.
 
 ## Delivery results and limits
 
-HTTP202 or an MCP queue response is acceptance in this process, not delivery
+HTTP 202 or an MCP queue response is acceptance in this process, not delivery
 or processing. A turn receipt means Codex accepted the input, not that it read
 or answered it. Only the latest delivery result is retained; this is not a
 message-history API. Queues disappear on process exit and there is no

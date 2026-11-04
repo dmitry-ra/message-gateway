@@ -125,7 +125,7 @@ def scan_recording(path: Path) -> None:
         raise ValueError("Recording contains a private path or identifying value")
     for event in records[1:]:
         if isinstance(event, list) and len(event) == 3 and event[1] == "x":
-            if event[2] != "0":
+            if type(event[2]) not in (int, str) or event[2] not in (0, "0"):
                 raise ValueError("Recorded command did not exit successfully")
             continue
         if not isinstance(event, list) or len(event) != 3 or event[1] != "o":

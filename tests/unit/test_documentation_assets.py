@@ -68,11 +68,20 @@ def test_recording_scan_accepts_neutral_actual_output(tmp_path: Path) -> None:
     scan_recording(path)
 
 
-def test_recording_scan_requires_successful_exit_when_present(tmp_path: Path) -> None:
+@pytest.mark.parametrize("exit_code", [0, "0"])
+def test_recording_scan_accepts_successful_exit(tmp_path: Path, exit_code: int | str) -> None:
     path = tmp_path / "sample.cast"
-    path.write_text(json.dumps({"version": 2}) + "\n" + json.dumps([0, "x", "0"]) + "\n")
+    path.write_text(json.dumps({"version": 2}) + "\n" + json.dumps([0, "x", exit_code]) + "\n")
     scan_recording(path)
-    path.write_text(json.dumps({"version": 2}) + "\n" + json.dumps([0, "x", "1"]) + "\n")
+
+
+@pytest.mark.parametrize("exit_code", [1, "1", False])
+def test_recording_scan_rejects_unsuccessful_exit(
+    tmp_path: Path,
+    exit_code: int | str,
+) -> None:
+    path = tmp_path / "sample.cast"
+    path.write_text(json.dumps({"version": 2}) + "\n" + json.dumps([0, "x", exit_code]) + "\n")
     with pytest.raises(ValueError):
         scan_recording(path)
 
