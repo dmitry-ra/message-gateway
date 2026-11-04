@@ -1,0 +1,50 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Message Gateway", "version": "0.5.0", "description": "In-memory routing through REST and Streamable HTTP MCP. Acceptance is not durable and does not mean processing completed."},
+  "servers": [{"url": "http://127.0.0.1:10880"}],
+  "security": [{"bearerAuth": []}, {}],
+  "paths": {
+    "/openapi.json": {"get": {"operationId": "specification", "responses": {"200": {"description": "This OpenAPI document"}, "401": {"$ref": "#/components/responses/Unauthorized"}}}},
+    "/v1/targets": {"get": {
+      "operationId": "listTargets",
+      "responses": {
+        "200": {"description": "Configured targets and current process state", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Targets"}}}},
+        "401": {"$ref": "#/components/responses/Unauthorized"},
+        "403": {"description": "Invalid Host or Origin", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+      }
+    }},
+    "/v1/targets/{target}/messages": {"post": {
+      "operationId": "submitMessage",
+      "parameters": [{"name": "target", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Submission"}, "examples": {
+        "text": {"value": {"channel": "alerts", "content": "Check the build"}},
+        "json": {"value": {"channel": "builds", "content": {"build": 42, "passed": true}}},
+        "displayMetadata": {"value": {"channel": "external", "sender": "name", "preview": "A new event", "content": {"source_specific": "opaque payload"}}}
+      }}}},
+      "responses": {
+        "202": {"description": "Queued in memory; content retains its JSON type", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Message"}}}},
+        "400": {"description": "Invalid request or content exceeds 65536 UTF-8 bytes when JSON encoded", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+        "401": {"$ref": "#/components/responses/Unauthorized"},
+        "403": {"description": "Invalid Host or Origin", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+        "404": {"description": "Unknown destination", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+        "413": {"description": "Request body exceeds 512 KiB"},
+        "429": {"description": "Destination queue is full", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+      }
+    }}
+  },
+  "components": {
+    "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer", "description": "Required when MESSAGE_GATEWAY_TOKEN is configured; otherwise loopback access only."}},
+    "responses": {"Unauthorized": {"description": "Missing or invalid bearer token", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}},
+    "schemas": {
+      "Content": {"description": "Any finite JSON value; strings must contain non-whitespace text. JSON-encoded content is limited to 65536 UTF-8 bytes.", "anyOf": [{"type": "string", "pattern": "\\S"}, {"type": "object"}, {"type": "array"}, {"type": "number"}, {"type": "boolean"}, {"type": "null"}]},
+      "Sender": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "pattern": "\\S", "description": "Optional display metadata; does not authenticate the sender."},
+      "Preview": {"type": ["string", "null"], "maxLength": 256, "description": "Optional display-only text, independent of opaque content."},
+      "SentAt": {"type": ["string", "null"], "format": "date-time", "maxLength": 64, "description": "Optional source-supplied sending time with timezone. Distinct from gateway received_at."},
+      "Submission": {"type": "object", "additionalProperties": false, "required": ["channel", "content"], "properties": {"channel": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S"}, "sender": {"$ref": "#/components/schemas/Sender"}, "preview": {"$ref": "#/components/schemas/Preview"}, "sent_at": {"$ref": "#/components/schemas/SentAt"}, "content": {"$ref": "#/components/schemas/Content"}}},
+      "Message": {"type": "object", "additionalProperties": false, "required": ["id", "channel", "content", "received_at", "sender", "preview", "sent_at"], "properties": {"id": {"type": "string"}, "channel": {"type": "string"}, "sender": {"$ref": "#/components/schemas/Sender"}, "preview": {"$ref": "#/components/schemas/Preview"}, "sent_at": {"$ref": "#/components/schemas/SentAt"}, "content": {"$ref": "#/components/schemas/Content"}, "received_at": {"type": "string", "format": "date-time"}}},
+      "Error": {"type": "object", "additionalProperties": false, "required": ["error"], "properties": {"error": {"type": "string"}}},
+      "Target": {"type": "object", "additionalProperties": false, "required": ["state", "batching", "queued", "sending", "last_result"], "properties": {"state": {"enum": ["ready", "busy", "unknown"]}, "batching": {"type": "boolean"}, "queued": {"type": "integer", "minimum": 0}, "sending": {"type": "integer", "minimum": 0}, "last_result": {"type": ["object", "null"]}}},
+      "Targets": {"type": "object", "additionalProperties": {"$ref": "#/components/schemas/Target"}}
+    }
+  }
+}

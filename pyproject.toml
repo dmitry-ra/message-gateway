@@ -1,0 +1,64 @@
+[project]
+name = "message-gateway"
+version = "0.5.0"
+description = "An in-memory message gateway with per-destination batching and runtime adapters"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp==3.14.5",
+    "mcp==2.3.0",
+    "pydantic==2.13.5",
+    "starlette==1.10.0",
+    "uvicorn==0.54.0",
+]
+
+[project.scripts]
+message-gateway = "message_gateway.cli:main"
+
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/message_gateway"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/tests", "/tools", "/plugins", "/examples", "/.agents", "/AGENTS.md", "/.python-version"]
+
+[dependency-groups]
+dev = [
+    "black==26.10.1",
+    "ruff==0.17.3",
+    "mypy==2.4.1",
+    "pytest==9.2.0",
+    "pytest-cov==7.1.0",
+    "jsonschema==4.26.0",
+    "types-jsonschema==4.26.0.20261006",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --import-mode=importlib -m 'not live' --cov=message_gateway --cov-branch --cov-report=term-missing --cov-fail-under=90"
+markers = ["live: requires an explicitly selected running Codex test session"]
+
+[tool.coverage.run]
+source = ["message_gateway"]
+branch = true
+patch = ["subprocess"]
