@@ -63,3 +63,19 @@ def test_whitespace_state_is_unknown(state: str) -> None:
 
     with pytest.raises(DeliveryUnknown):
         thread_readiness({"status": {"type": state}})
+
+
+@pytest.mark.parametrize("state", ["", " ", "\t\n"])
+def test_whitespace_notification_is_ignored(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, state: str
+) -> None:
+    caplog.set_level("INFO", logger="message_gateway.diagnostics")
+    adapter = CodexAdapter("thread", tmp_path / "unused")
+    adapter._notification(
+        {
+            "method": "thread/status/changed",
+            "params": {"threadId": "thread", "status": {"type": state}},
+        }
+    )
+    assert not caplog.records
+    assert not adapter.observed_states
