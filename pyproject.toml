@@ -1,6 +1,6 @@
 [project]
 name = "message-gateway"
-version = "0.6.0"
+version = "0.6.1"
 description = "An in-memory message gateway with per-destination batching and runtime adapters"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -34,6 +34,7 @@ dev = [
     "pytest-cov==7.1.0",
     "jsonschema==4.26.0",
     "types-jsonschema==4.26.0.20261006",
+    "rfc3339-validator==0.1.4",
 ]
 
 [tool.black]

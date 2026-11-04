@@ -1,9 +1,10 @@
 import asyncio
 import json
 from importlib.resources import files
+from pathlib import Path
 from typing import Any
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, FormatChecker
 
 from message_gateway import __version__
 from message_gateway.core.models import JsonValue
@@ -16,14 +17,18 @@ from tests.helpers import FakeAdapter, http_client
 def test_specification_matches_real_responses() -> None:
     spec = json.loads(files("message_gateway.interfaces").joinpath("openapi.json").read_text())
     assert spec["info"]["version"] == __version__
+    plugin = (
+        Path(__file__).resolve().parents[2] / "plugins/message-gateway/.codex-plugin/plugin.json"
+    )
+    assert json.loads(plugin.read_text())["version"] == __version__
     assert set(spec["components"]["schemas"]["Submission"]["properties"]) == set(
         Submission.model_fields
     )
 
     def validate(name: str, value: Any) -> None:
-        Draft202012Validator(spec).evolve(schema={"$ref": "#/components/schemas/" + name}).validate(
-            value
-        )
+        Draft202012Validator(spec, format_checker=FormatChecker()).evolve(
+            schema={"$ref": "#/components/schemas/" + name}
+        ).validate(value)
 
     async def scenario() -> None:
         adapter = FakeAdapter()
@@ -64,3 +69,26 @@ def test_specification_matches_real_responses() -> None:
         assert message.content == {"a": [1]}
 
     asyncio.run(scenario())
+
+
+def test_timestamp_schema_enforces_date_time() -> None:
+    spec = json.loads(files("message_gateway.interfaces").joinpath("openapi.json").read_text())
+    checker = FormatChecker(formats=["date-time"])
+    assert not checker.conforms("2026-11-04X12:00:00+00:00", "date-time")
+    validator = Draft202012Validator(spec, format_checker=checker).evolve(
+        schema={"$ref": "#/components/schemas/SentAt"}
+    )
+    for value in [
+        "2026-11-04T12:00:00Z",
+        "2026-11-04t12:00:00z",
+        "2026-11-04T12:00:00.123456789+03:30",
+        "2026-11-04T12:00:00-05:00",
+    ]:
+        validator.validate(value)
+    for value in [
+        "2026-11-04X12:00:00+00:00",
+        "2026-11-04 12:00:00+00:00",
+        "2026-11-04T12:00Z",
+        "2026-11-04T12:00:00+0300",
+    ]:
+        assert not validator.is_valid(value), value

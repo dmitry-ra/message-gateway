@@ -2,13 +2,21 @@
 
 import asyncio
 import json
+import re
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime
+
+from pydantic import AwareDatetime, TypeAdapter
 
 from message_gateway.core.adapter import Adapter
 from message_gateway.core.models import DeliveryBusy, JsonValue, Message, Readiness
 from message_gateway.diagnostics import emit
+
+_TIMESTAMP_SHAPE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})"
+)
+_TIMESTAMP = TypeAdapter(AwareDatetime)
 
 
 class QueueFull(Exception):
@@ -61,8 +69,9 @@ class Service:
                 raise ValueError("Preview cannot exceed 256 characters")
             preview.encode("utf-8")
         if sent_at is not None:
-            if len(sent_at) > 64 or datetime.fromisoformat(sent_at).utcoffset() is None:
-                raise ValueError("sent_at must be an ISO 8601 timestamp with a timezone")
+            if len(sent_at) > 64 or _TIMESTAMP_SHAPE.fullmatch(sent_at) is None:
+                raise ValueError("sent_at must be an RFC 3339 timestamp with a timezone")
+            _TIMESTAMP.validate_python(sent_at)
         if isinstance(content, str) and not content.strip():
             raise ValueError("Text content cannot be blank")
         encoded = json.dumps(content, ensure_ascii=False, allow_nan=False)

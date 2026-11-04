@@ -154,7 +154,7 @@ def format_messages(
             "".join(c if c.isprintable() else " " for c in (message.sender or "")).split()
         )[:32]
         timestamp = (
-            datetime.fromisoformat(message.sent_at or message.received_at)
+            datetime.fromisoformat((message.sent_at or message.received_at).upper())
             .astimezone(UTC)
             .strftime("%Y-%m-%d %H:%M:%S UTC")
         )

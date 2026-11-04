@@ -48,7 +48,9 @@ never the channel name or payload fields. Source integrations own decoding,
 attachments, and their source-specific skills. Neither the core nor the Codex
 adapter interprets fields such as text, photos, or documents inside content.
 Optional `sender`, `preview`, and `sent_at` are display metadata. `sent_at` is
-source-supplied and requires a timezone; `received_at` is the gateway's own
+source-supplied RFC 3339 date-time with seconds and a timezone (`Z` or
+`+/-HH:MM`); lowercase `t`/`z` and fractional seconds are accepted. Accepted
+strings are preserved. Leap seconds are unsupported. `received_at` is the gateway's own
 acceptance time. Display timestamps use UTC. When sending time is absent,
 the received-time fallback is explicitly labeled `received`. A source integration can
 submit a readable preview while keeping its complete original JSON in content.

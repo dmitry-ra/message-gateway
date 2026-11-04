@@ -1,6 +1,6 @@
 {
   "openapi": "3.1.0",
-  "info": {"title": "Message Gateway", "version": "0.6.0", "description": "In-memory routing through REST and Streamable HTTP MCP. Acceptance is not durable and does not mean processing completed."},
+  "info": {"title": "Message Gateway", "version": "0.6.1", "description": "In-memory routing through REST and Streamable HTTP MCP. Acceptance is not durable and does not mean processing completed."},
   "servers": [{"url": "http://127.0.0.1:10880"}],
   "security": [{"bearerAuth": []}, {}],
   "paths": {
@@ -39,7 +39,7 @@
       "Content": {"description": "Any finite JSON value; strings must contain non-whitespace text. JSON-encoded content is limited to 65536 UTF-8 bytes.", "anyOf": [{"type": "string", "pattern": "\\S"}, {"type": "object"}, {"type": "array"}, {"type": "number"}, {"type": "boolean"}, {"type": "null"}]},
       "Sender": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "pattern": "\\S", "description": "Optional display metadata; does not authenticate the sender."},
       "Preview": {"type": ["string", "null"], "maxLength": 256, "description": "Optional display-only text, independent of opaque content."},
-      "SentAt": {"type": ["string", "null"], "format": "date-time", "maxLength": 64, "description": "Optional source-supplied sending time with timezone. Distinct from gateway received_at."},
+      "SentAt": {"type": ["string", "null"], "format": "date-time", "maxLength": 64, "description": "Optional source-supplied RFC 3339 sending time with seconds and timezone (Z or signed HH:MM). Lowercase t/z and fractional seconds are accepted; leap seconds are unsupported. Accepted strings are preserved. Distinct from gateway received_at."},
       "Submission": {"type": "object", "additionalProperties": false, "required": ["channel", "content"], "properties": {"channel": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S"}, "sender": {"$ref": "#/components/schemas/Sender"}, "preview": {"$ref": "#/components/schemas/Preview"}, "sent_at": {"$ref": "#/components/schemas/SentAt"}, "content": {"$ref": "#/components/schemas/Content"}}},
       "Message": {"type": "object", "additionalProperties": false, "required": ["id", "channel", "content", "received_at", "sender", "preview", "sent_at"], "properties": {"id": {"type": "string"}, "channel": {"type": "string"}, "sender": {"$ref": "#/components/schemas/Sender"}, "preview": {"$ref": "#/components/schemas/Preview"}, "sent_at": {"$ref": "#/components/schemas/SentAt"}, "content": {"$ref": "#/components/schemas/Content"}, "received_at": {"type": "string", "format": "date-time"}}},
       "Error": {"type": "object", "additionalProperties": false, "required": ["error"], "properties": {"error": {"type": "string"}}},

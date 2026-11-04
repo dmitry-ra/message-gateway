@@ -111,3 +111,43 @@ def test_mcp_rejects_bad_arguments_without_coercion() -> None:
                     assert not service.targets["work"].queue
 
     asyncio.run(scenario())
+
+
+def test_http_and_mcp_share_timestamp_validation() -> None:
+    async def scenario() -> None:
+        service = Service({"work": Target(FakeAdapter())})
+        async with running(create_app(service)) as url:
+            async with create_mcp_http_client() as http:
+                async with streamable_http_client(url + "/mcp", http_client=http) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        for sent_at, accepted in [
+                            ("2026-11-04X12:00:00+00:00", False),
+                            ("2026-11-04 12:00:00+00:00", False),
+                            ("2026-11-04T12:00Z", False),
+                            ("2026-11-04T12:00:00+0300", False),
+                            ("2026-11-04T12:00:00", False),
+                            ("2026-02-30T12:00:00Z", False),
+                            ("2026-11-04T12:00:00Z", True),
+                            ("2026-11-04t12:00:00z", True),
+                            ("2026-11-04T12:00:00.123456789+03:30", True),
+                            ("2026-11-04T12:00:00-05:00", True),
+                        ]:
+                            before = len(service.targets["work"].queue)
+                            body = {"channel": "source", "content": "x", "sent_at": sent_at}
+                            response = await http.post(url + "/v1/targets/work/messages", json=body)
+                            assert response.status_code == (202 if accepted else 400), sent_at
+                            result = await session.call_tool(
+                                "send_message", {"target": "work", **body}
+                            )
+                            assert result.is_error is not accepted, sent_at
+                            queued = list(service.targets["work"].queue)[before:]
+                            assert [message.sent_at for message in queued] == (
+                                [sent_at, sent_at] if accepted else []
+                            )
+                            if accepted:
+                                assert response.json()["sent_at"] == sent_at
+                                assert result.structured_content is not None
+                                assert result.structured_content["sent_at"] == sent_at
+
+    asyncio.run(scenario())
