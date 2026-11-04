@@ -1,6 +1,6 @@
 # Validation record
 
-## Current foundation and delivery-state checks (0.5.1)
+## Current deterministic checks (0.6.0)
 
 The current deterministic suite exercises one daemon hosting HTTP and Streamable
 HTTP MCP, queue ordering and batching, complete original context, CLI startup,
@@ -11,6 +11,13 @@ Python 3.12, 3.13, and 3.14 for the actual pull request head.
 Delivery-state tests cover non-active recovery attempts, malformed and unavailable
 state reads, queue diagnostics and native turn error/completion observations.
 Diagnostics use an explicit field allowlist without source message content.
+
+Interactive tests cover opt-in active-turn steering with a bounded native turn
+lookup, original context preservation, matching expected-turn receipts and the
+absence of new-turn overrides in steering requests. Definite pre-submission
+failures retain FIFO order across recovery; uncertain input submissions are not
+automatically replayed. These deterministic tests use a local App Server fake.
+They do not claim model processing or live latency from a transport receipt.
 
 Package, CLI, OpenAPI, lockfile and plugin versions share the same release series.
 Earlier branch prototypes reached 0.4.0 before a development version reset;

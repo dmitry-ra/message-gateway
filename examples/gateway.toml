@@ -3,4 +3,6 @@
 name = "work"
 thread = "REPLACE_WITH_THREAD_ID"
 batching = true
+# Set interactive = true to steer active Codex turns instead of waiting.
+# With batching = false each queued message is submitted separately.
 # socket defaults to ~/.codex/app-server-control/app-server-control.sock

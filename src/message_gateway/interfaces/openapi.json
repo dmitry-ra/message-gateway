@@ -1,6 +1,6 @@
 {
   "openapi": "3.1.0",
-  "info": {"title": "Message Gateway", "version": "0.5.1", "description": "In-memory routing through REST and Streamable HTTP MCP. Acceptance is not durable and does not mean processing completed."},
+  "info": {"title": "Message Gateway", "version": "0.6.0", "description": "In-memory routing through REST and Streamable HTTP MCP. Acceptance is not durable and does not mean processing completed."},
   "servers": [{"url": "http://127.0.0.1:10880"}],
   "security": [{"bearerAuth": []}, {}],
   "paths": {
